@@ -1,17 +1,20 @@
+// Conteúdo completo e refatorado para: src/importacao/importacao.module.ts
+
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ImportacaoController } from './importacao.controller';
 import { ImportacaoService } from './importacao.service';
 import { HistoricoImportacao } from './entities/historico-importacao.entity';
-import { MulterModule } from '@nestjs/platform-express';
+import { Produto } from '../produtos/entities/produto.entity';
+import { VendasModule } from '../vendas/vendas.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([HistoricoImportacao]),
-    // Configuração do Multer para armazenar arquivos em memória
-    MulterModule.register({
-        dest: './upload', // Esta pasta é temporária, vamos usar o buffer em memória
-    }),
+    TypeOrmModule.forFeature([
+      HistoricoImportacao,
+      Produto, // Repositório de Produto é necessário para a lógica de 'encontrar ou criar'
+    ]),
+    VendasModule,
   ],
   controllers: [ImportacaoController],
   providers: [ImportacaoService],

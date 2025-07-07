@@ -1,3 +1,5 @@
+// Conteúdo completo e corrigido para: src/produtos/entities/produto.entity.ts
+
 import { Fornecedor } from '../../fornecedores/entities/fornecedor.entity';
 import { 
     Entity, 
@@ -14,14 +16,14 @@ export class Produto {
   @PrimaryGeneratedColumn()
   id: number;
 
-  // ===== CAMPO ADICIONADO =====
-  // Esta propriedade mapeia a nova coluna 'codigo' que criamos no banco.
   @Column({ type: 'varchar', length: 50, unique: true, nullable: true })
   codigo: string;
-  // ============================
 
-  @Column({ type: 'varchar', length: 255, unique: true, nullable: false })
+  // ===== CORREÇÃO APLICADA AQUI =====
+  // Removemos o { unique: true } para permitir nomes duplicados
+  @Column({ type: 'varchar', length: 255, nullable: false })
   nome: string;
+  // ===================================
 
   @Column({ type: 'text', nullable: true })
   descricao: string;
@@ -29,9 +31,8 @@ export class Produto {
   @Column({ name: 'unidade_medida', type: 'varchar', length: 10, nullable: false })
   unidade_medida: string;
   
-  // Relacionamento: Muitos produtos podem pertencer a UM fornecedor principal.
-  @ManyToOne(() => Fornecedor, { eager: false }) // eager: false para não carregar sempre por padrão
-  @JoinColumn({ name: 'fornecedor_id' }) // Especifica a coluna da chave estrangeira
+  @ManyToOne(() => Fornecedor, { eager: false })
+  @JoinColumn({ name: 'fornecedor_id' })
   fornecedor: Fornecedor;
 
   @CreateDateColumn({ name: 'data_criacao' })

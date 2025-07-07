@@ -1,52 +1,154 @@
-import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
-import { ProdutoExtraidoDto } from './dto/produto-extraido.dto';
-import * as fs from 'fs';
+// Conteúdo final e correto para: src/importacao/importacao.service.ts
+
+import { Injectable, InternalServerErrorException, Logger, BadRequestException } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { DataSource, Repository } from 'typeorm';
 import * as pdfParse from 'pdf-parse';
+import { HistoricoImportacao, StatusImportacao } from './entities/historico-importacao.entity';
+import { Produto } from '../produtos/entities/produto.entity';
+import { ProdutoExtraidoDto } from './dto/produto-extraido.dto';
+import { Fornecedor } from '../fornecedores/entities/fornecedor.entity';
+import { Venda } from '../vendas/entities/venda.entity'; // <-- 1. IMPORTAR A ENTIDADE VENDA
 
 @Injectable()
 export class ImportacaoService {
   private readonly logger = new Logger(ImportacaoService.name);
 
-  async processarArquivoVendas(file: Express.Multer.File): Promise<ProdutoExtraidoDto[]> {
-    this.logger.log(`Iniciando leitura do PDF em: ${file.path}`);
+  constructor(
+    @InjectRepository(HistoricoImportacao)
+    private readonly historicoRepository: Repository<HistoricoImportacao>,
+    @InjectRepository(Produto)
+    private readonly produtoRepository: Repository<Produto>,
+    @InjectRepository(Venda) // <-- 2. INJETAR O REPOSITÓRIO DE VENDA
+    private readonly vendaRepository: Repository<Venda>,
+    private readonly dataSource: DataSource,
+  ) {}
 
+  async processarArquivoVendas(file: Express.Multer.File): Promise<HistoricoImportacao> {
+    this.logger.log(`Iniciando processamento automático do arquivo: ${file.originalname}`);
+
+    const textoExtraido = await this.extrairTextoDoPdf(file.buffer);
+    const produtosExtraidos = this.analisarTextoDoRelatorio(textoExtraido);
+
+    if (produtosExtraidos.length === 0) {
+      throw new BadRequestException('Nenhum produto válido foi encontrado no relatório.');
+    }
+
+    const queryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+    
     try {
-      const buffer = fs.readFileSync(file.path);
-      const data = await pdfParse(buffer);
-      const texto = data.text;
+      // Cria e salva o histórico PRIMEIRO para termos um ID
+      const historico = await queryRunner.manager.save(
+        this.historicoRepository.create({
+            nome_arquivo_origem: file.originalname,
+            status: StatusImportacao.CONCLUIDA,
+        })
+      );
+      this.logger.log(`Histórico de importação #${historico.id} criado.`);
 
-      console.log('------ CONTEÚDO DO PDF EXTRAÍDO ------');
-      console.log(texto);
-      console.log('--------------------------------------');
+      const fornecedorPadrao = await this.garantirFornecedorPadrao(queryRunner);
+      let faturamentoTotal = 0;
 
-      const linhas = texto.split('\n');
-      const produtosExtraidos: ProdutoExtraidoDto[] = [];
+      for (const dto of produtosExtraidos) {
+        let produto = await queryRunner.manager.findOneBy(Produto, { codigo: dto.codigo });
 
-      for (const linha of linhas) {
-        const linhaLimpa = linha.trim();
-        
-        // Pular linhas vazias e cabeçalhos/rodapés conhecidos
-        if (!linhaLimpa || linhaLimpa.length < 10 || !/^\d/.test(linhaLimpa) ||
-            !/[a-zA-Z]/.test(linhaLimpa) ||
-            linhaLimpa.includes('Nome da Empresa') || 
-            linhaLimpa.includes('Endereço:') ||
-            // ... (manter as outras verificações de cabeçalho)
-            linhaLimpa.includes('Lucro No Periodo')) {
-          continue;
+        if (!produto) {
+          this.logger.log(`Produto com código '${dto.codigo}' não encontrado. Criando novo produto...`);
+          
+          const produtoComMesmoNome = await queryRunner.manager.findOneBy(Produto, { nome: dto.descricao });
+          if(produtoComMesmoNome) {
+             this.logger.warn(`Atenção: Criando produto com nome duplicado '${dto.descricao}', pois o código '${dto.codigo}' é novo.`);
+          }
+
+          produto = await queryRunner.manager.save(this.produtoRepository.create({
+            codigo: dto.codigo,
+            nome: dto.descricao,
+            unidade_medida: 'UN',
+            fornecedor: fornecedorPadrao,
+          }));
+          this.logger.log(`Novo produto '${produto.nome}' (ID: ${produto.id}) criado com sucesso.`);
         }
 
-        // A Regex Universal resolve a ambiguidade ao ancorar a busca no final da linha ($)
+        // ===== 3. SALVANDO OS DADOS DA VENDA NA NOVA TABELA =====
+        const novaVenda = this.vendaRepository.create({
+            produto: produto,
+            historico_importacao: historico,
+            quantidade_vendida: dto.quantidade_vendida,
+            preco_venda_unitario: dto.venda,
+            custo_unitario: dto.custo,
+        });
+        await queryRunner.manager.save(novaVenda);
+        // =========================================================
+
+        faturamentoTotal += dto.quantidade_vendida * dto.venda;
+      }
+      
+      // Atualiza o histórico com o faturamento total
+      historico.faturamento_total = faturamentoTotal;
+      const historicoSalvo = await queryRunner.manager.save(historico);
+      
+      await queryRunner.commitTransaction();
+      this.logger.log(`Importação #${historicoSalvo.id} concluída com sucesso! Faturamento: ${faturamentoTotal.toFixed(2)}`);
+      return historicoSalvo;
+
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      this.logger.error(`Falha catastrófica na transação da importação.`, error);
+      if (error.code === '23505') {
+          throw new InternalServerErrorException(`Erro de duplicidade no banco de dados. Detalhe: ${error.detail}`);
+      }
+      throw new InternalServerErrorException('Ocorreu um erro ao salvar os dados da importação.');
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  // O restante do arquivo permanece igual...
+
+  private async garantirFornecedorPadrao(queryRunner: any): Promise<Fornecedor> {
+    const NOME_FORNECEDOR_PADRAO = 'FORNECEDOR DIVERSOS';
+    let fornecedorPadrao = await queryRunner.manager.findOneBy(Fornecedor, { nome: NOME_FORNECEDOR_PADRAO });
+
+    if (!fornecedorPadrao) {
+      this.logger.log(`Fornecedor padrão não encontrado. Criando "${NOME_FORNECEDOR_PADRAO}"...`);
+      fornecedorPadrao = queryRunner.manager.create(Fornecedor, {
+        nome: NOME_FORNECEDOR_PADRAO,
+        cnpj: '00.000.000/0000-00',
+      });
+      await queryRunner.manager.save(fornecedorPadrao);
+    }
+    return fornecedorPadrao;
+  }
+
+  private async extrairTextoDoPdf(buffer: Buffer): Promise<string> {
+    try {
+        const data = await pdfParse(buffer);
+        return data.text;
+    } catch(error) {
+        this.logger.error('Falha ao extrair texto do PDF', error);
+        throw new Error('Não foi possível ler o conteúdo do arquivo PDF.');
+    }
+  }
+
+  private analisarTextoDoRelatorio(texto: string): ProdutoExtraidoDto[] {
+    const linhas = texto.split('\n');
+    const produtosExtraidos: ProdutoExtraidoDto[] = [];
+
+    for (const linha of linhas) {
+        const linhaLimpa = linha.trim();
+        if (!linhaLimpa || linhaLimpa.length < 10 || !/^\d/.test(linhaLimpa) || !/[a-zA-Z]/.test(linhaLimpa)) continue;
         const regexUniversal = /^(\d+)(.+?)(\d{1,3}(?:\.\d{3})*,\d{2})(\d{1,3}(?:\.\d{3})*,\d{2})(\d{1,3}(?:\.\d{3})*,\d{2})(\d{1,3}(?:\.\d{3})*,\d{2})(-?\d{1,3}(?:\.\d{3})*,\d{2})$/;
         const match = linhaLimpa.match(regexUniversal);
 
         if (match) {
             const [, codigo, descricao, qtdStr, custoStr, custoRealStr, vendaStr, markupStr] = match;
-            
-            const quantidade = this.parseNumero(qtdStr);
-            const custo = this.parseNumero(custoStr);
-            const custoReal = this.parseNumero(custoRealStr);
-            const venda = this.parseNumero(vendaStr);
-            const markup = this.parseNumero(markupStr);
+            const quantidade = parseFloat(qtdStr.replace(/\./g, '').replace(',', '.'));
+            const custo = parseFloat(custoStr.replace(/\./g, '').replace(',', '.'));
+            const custoReal = parseFloat(custoRealStr.replace(/\./g, '').replace(',', '.'));
+            const venda = parseFloat(vendaStr.replace(/\./g, '').replace(',', '.'));
+            const markup = parseFloat(markupStr.replace(/\./g, '').replace(',', '.'));
             const descricaoLimpa = descricao.trim().replace(/\s+/g, ' ');
 
             if (!isNaN(quantidade) && !isNaN(venda)) {
@@ -54,34 +156,14 @@ export class ImportacaoService {
                     codigo: codigo.trim(),
                     descricao: descricaoLimpa,
                     quantidade_vendida: quantidade,
-                    custo: custo,
+                    custo,
                     custo_real: custoReal,
-                    venda: venda,
-                    markup: markup
+                    venda,
+                    markup
                 });
-                console.log(`✓ Produto extraído: ${codigo} - ${descricaoLimpa}`);
-            }
-        } else {
-            if (linhaLimpa.match(/^\d+[A-Z]/)) {
-                console.log(`❌ Linha não capturada: ${linhaLimpa}`);
             }
         }
-      }
-
-      this.logger.log(`${produtosExtraidos.length} produtos extraídos com sucesso.`);
-      return produtosExtraidos;
-
-    } catch (error) {
-      this.logger.error('Erro ao ler ou extrair dados do PDF:', error);
-      throw new InternalServerErrorException('Erro ao processar arquivo PDF');
-    } finally {
-      this.logger.log(`Removendo arquivo temporário: ${file.path}`);
-      fs.unlinkSync(file.path);
     }
-  }
-
-  private parseNumero(valorString: string): number {
-    if (!valorString) return NaN;
-    return parseFloat(valorString.replace(/\./g, '').replace(',', '.'));
+    return produtosExtraidos;
   }
 }

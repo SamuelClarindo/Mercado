@@ -12,7 +12,10 @@ import { Produto } from './produtos/entities/produto.entity';
 import { Despesa } from './despesas/entities/despesa.entity';
 import { Compra } from './compras/entities/compra.entity';
 import { ItemCompra } from './compras/entities/item-compra.entity';
-import { HistoricoImportacao } from './importacao/entities/historico-importacao.entity'; // <-- ADICIONADO
+import { HistoricoImportacao } from './importacao/entities/historico-importacao.entity';
+import { VendasModule } from './vendas/vendas.module'; // <-- Adicionar
+import { Venda } from './vendas/entities/venda.entity';   // <-- Adicionar
+
 
 @Module({
   imports: [
@@ -23,13 +26,14 @@ import { HistoricoImportacao } from './importacao/entities/historico-importacao.
       username: 'postgres',
       password: '1234', // Verifique sua senha
       database: 'hortifruti_db',
-      entities: [Fornecedor, Produto, Despesa, Compra, ItemCompra, HistoricoImportacao], // <-- ADICIONADO
-      synchronize: true,
+      entities: [Fornecedor, Produto, Despesa, Compra, ItemCompra, HistoricoImportacao, Venda], // <-- ADICIONADO
+      synchronize: false,
     }),
     FornecedoresModule,
     ProdutosModule,
     DespesasModule,
     ComprasModule,
+    VendasModule,
     ImportacaoModule, // <-- ADICIONADO
   ],
   controllers: [AppController],
