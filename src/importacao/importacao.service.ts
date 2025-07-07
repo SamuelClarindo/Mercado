@@ -39,7 +39,6 @@ export class ImportacaoService {
     await queryRunner.startTransaction();
     
     try {
-      // Cria e salva o histórico PRIMEIRO para termos um ID
       const historico = await queryRunner.manager.save(
         this.historicoRepository.create({
             nome_arquivo_origem: file.originalname,
@@ -71,26 +70,37 @@ export class ImportacaoService {
           this.logger.log(`Novo produto '${produto.nome}' (ID: ${produto.id}) criado com sucesso.`);
         }
 
-        // ===== 3. SALVANDO OS DADOS DA VENDA NA NOVA TABELA =====
+        // ===== MODIFICAÇÃO APLICADA AQUI =====
+        const custoUnitario = parseFloat((dto.custo / dto.quantidade_vendida).toFixed(2));
+        const precoVendaUnitario = parseFloat((dto.venda / dto.quantidade_vendida).toFixed(2));
+
         const novaVenda = this.vendaRepository.create({
             produto: produto,
             historico_importacao: historico,
             quantidade_vendida: dto.quantidade_vendida,
-            preco_venda_unitario: dto.venda,
-            custo_unitario: dto.custo,
+            
+            custo_total: dto.custo, 
+            preco_venda_total: dto.venda,
+            
+            custo_unitario: custoUnitario,
+            preco_venda_unitario: precoVendaUnitario,
         });
         await queryRunner.manager.save(novaVenda);
-        // =========================================================
+        // =====================================
 
-        faturamentoTotal += dto.quantidade_vendida * dto.venda;
+        // ===== MODIFICAÇÃO APLICADA AQUI =====
+        // Corrigido para somar o faturamento total do item (dto.venda)
+        faturamentoTotal += dto.venda;
+        // =====================================
       }
       
-      // Atualiza o histórico com o faturamento total
-      historico.faturamento_total = faturamentoTotal;
+      // ===== MODIFICAÇÃO APLICADA AQUI =====
+      historico.faturamento_total = parseFloat(faturamentoTotal.toFixed(2));
+      // =====================================
       const historicoSalvo = await queryRunner.manager.save(historico);
       
       await queryRunner.commitTransaction();
-      this.logger.log(`Importação #${historicoSalvo.id} concluída com sucesso! Faturamento: ${faturamentoTotal.toFixed(2)}`);
+      this.logger.log(`Importação #${historicoSalvo.id} concluída com sucesso! Faturamento: ${historicoSalvo.faturamento_total}`);
       return historicoSalvo;
 
     } catch (error) {
@@ -105,19 +115,18 @@ export class ImportacaoService {
     }
   }
 
-  // O restante do arquivo permanece igual...
-
   private async garantirFornecedorPadrao(queryRunner: any): Promise<Fornecedor> {
     const NOME_FORNECEDOR_PADRAO = 'FORNECEDOR DIVERSOS';
     let fornecedorPadrao = await queryRunner.manager.findOneBy(Fornecedor, { nome: NOME_FORNECEDOR_PADRAO });
 
     if (!fornecedorPadrao) {
       this.logger.log(`Fornecedor padrão não encontrado. Criando "${NOME_FORNECEDOR_PADRAO}"...`);
-      fornecedorPadrao = queryRunner.manager.create(Fornecedor, {
-        nome: NOME_FORNECEDOR_PADRAO,
-        cnpj: '00.000.000/0000-00',
-      });
-      await queryRunner.manager.save(fornecedorPadrao);
+      fornecedorPadrao = await queryRunner.manager.save(
+        queryRunner.manager.create(Fornecedor, {
+          nome: NOME_FORNECEDOR_PADRAO,
+          cnpj: '00.000.000/0000-00',
+        })
+      );
     }
     return fornecedorPadrao;
   }
@@ -151,7 +160,9 @@ export class ImportacaoService {
             const markup = parseFloat(markupStr.replace(/\./g, '').replace(',', '.'));
             const descricaoLimpa = descricao.trim().replace(/\s+/g, ' ');
 
-            if (!isNaN(quantidade) && !isNaN(venda)) {
+            // ===== MODIFICAÇÃO APLICADA AQUI =====
+            if (!isNaN(quantidade) && !isNaN(venda) && quantidade > 0) {
+            // =====================================
                 produtosExtraidos.push({
                     codigo: codigo.trim(),
                     descricao: descricaoLimpa,

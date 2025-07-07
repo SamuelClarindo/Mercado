@@ -1,4 +1,4 @@
-// Conteúdo para o novo arquivo: src/vendas/entities/venda.entity.ts
+// Conteúdo atualizado para: src/vendas/entities/venda.entity.ts
 
 import { HistoricoImportacao } from '../../importacao/entities/historico-importacao.entity';
 import { Produto } from '../../produtos/entities/produto.entity';
@@ -27,11 +27,19 @@ export class Venda {
   @Column({ name: 'quantidade_vendida', type: 'numeric', precision: 10, scale: 3 })
   quantidade_vendida: number;
 
-  @Column({ name: 'preco_venda_unitario', type: 'numeric', precision: 10, scale: 2 })
-  preco_venda_unitario: number;
-  
+  // --- CAMPOS ATUALIZADOS ---
   @Column({ name: 'custo_unitario', type: 'numeric', precision: 10, scale: 2 })
   custo_unitario: number;
+
+  @Column({ name: 'custo_total', type: 'numeric', precision: 10, scale: 2 })
+  custo_total: number;
+
+  @Column({ name: 'preco_venda_unitario', type: 'numeric', precision: 10, scale: 2 })
+  preco_venda_unitario: number;
+
+  @Column({ name: 'preco_venda_total', type: 'numeric', precision: 10, scale: 2 })
+  preco_venda_total: number;
+  // -------------------------
 
   @CreateDateColumn({ name: 'data_venda' })
   data_venda: Date;
