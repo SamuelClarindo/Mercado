@@ -1,4 +1,4 @@
-// Conteúdo final e correto para: src/importacao/importacao.service.ts
+// Conteúdo completo e modificado para: src/importacao/importacao.service.ts
 
 import { Injectable, InternalServerErrorException, Logger, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -8,7 +8,7 @@ import { HistoricoImportacao, StatusImportacao } from './entities/historico-impo
 import { Produto } from '../produtos/entities/produto.entity';
 import { ProdutoExtraidoDto } from './dto/produto-extraido.dto';
 import { Fornecedor } from '../fornecedores/entities/fornecedor.entity';
-import { Venda } from '../vendas/entities/venda.entity'; // <-- 1. IMPORTAR A ENTIDADE VENDA
+import { Venda } from '../vendas/entities/venda.entity';
 
 @Injectable()
 export class ImportacaoService {
@@ -19,13 +19,14 @@ export class ImportacaoService {
     private readonly historicoRepository: Repository<HistoricoImportacao>,
     @InjectRepository(Produto)
     private readonly produtoRepository: Repository<Produto>,
-    @InjectRepository(Venda) // <-- 2. INJETAR O REPOSITÓRIO DE VENDA
+    @InjectRepository(Venda)
     private readonly vendaRepository: Repository<Venda>,
     private readonly dataSource: DataSource,
   ) {}
 
-  async processarArquivoVendas(file: Express.Multer.File): Promise<HistoricoImportacao> {
-    this.logger.log(`Iniciando processamento automático do arquivo: ${file.originalname}`);
+  // <-- ALTERAÇÃO: A assinatura do método agora inclui o parâmetro 'dataDasVendas' -->
+  async processarArquivoVendas(file: Express.Multer.File, dataDasVendas: Date): Promise<HistoricoImportacao> {
+    this.logger.log(`Iniciando processamento do arquivo: ${file.originalname} para a data ${dataDasVendas.toISOString()}`);
 
     const textoExtraido = await this.extrairTextoDoPdf(file.buffer);
     const produtosExtraidos = this.analisarTextoDoRelatorio(textoExtraido);
@@ -43,6 +44,8 @@ export class ImportacaoService {
         this.historicoRepository.create({
             nome_arquivo_origem: file.originalname,
             status: StatusImportacao.CONCLUIDA,
+            // <-- ALTERAÇÃO: A data da importação agora é a data fornecida pelo usuário -->
+            data_importacao: dataDasVendas,
         })
       );
       this.logger.log(`Histórico de importação #${historico.id} criado.`);
@@ -70,7 +73,6 @@ export class ImportacaoService {
           this.logger.log(`Novo produto '${produto.nome}' (ID: ${produto.id}) criado com sucesso.`);
         }
 
-        // ===== MODIFICAÇÃO APLICADA AQUI =====
         const custoUnitario = parseFloat((dto.custo / dto.quantidade_vendida).toFixed(2));
         const precoVendaUnitario = parseFloat((dto.venda / dto.quantidade_vendida).toFixed(2));
 
@@ -78,25 +80,17 @@ export class ImportacaoService {
             produto: produto,
             historico_importacao: historico,
             quantidade_vendida: dto.quantidade_vendida,
-            
             custo_total: dto.custo, 
             preco_venda_total: dto.venda,
-            
             custo_unitario: custoUnitario,
             preco_venda_unitario: precoVendaUnitario,
         });
         await queryRunner.manager.save(novaVenda);
-        // =====================================
 
-        // ===== MODIFICAÇÃO APLICADA AQUI =====
-        // Corrigido para somar o faturamento total do item (dto.venda)
         faturamentoTotal += dto.venda;
-        // =====================================
       }
       
-      // ===== MODIFICAÇÃO APLICADA AQUI =====
       historico.faturamento_total = parseFloat(faturamentoTotal.toFixed(2));
-      // =====================================
       const historicoSalvo = await queryRunner.manager.save(historico);
       
       await queryRunner.commitTransaction();
@@ -160,9 +154,7 @@ export class ImportacaoService {
             const markup = parseFloat(markupStr.replace(/\./g, '').replace(',', '.'));
             const descricaoLimpa = descricao.trim().replace(/\s+/g, ' ');
 
-            // ===== MODIFICAÇÃO APLICADA AQUI =====
             if (!isNaN(quantidade) && !isNaN(venda) && quantidade > 0) {
-            // =====================================
                 produtosExtraidos.push({
                     codigo: codigo.trim(),
                     descricao: descricaoLimpa,
